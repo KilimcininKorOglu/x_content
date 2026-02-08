@@ -10,7 +10,7 @@ import sys
 
 from x_content.algorithm import ACTIONS
 from x_content.analyzer import analyze
-from x_content.prompts import build_full_prompt
+from x_content.prompts import build_full_prompt, build_preserve_style_prompt, build_refine_prompt
 from x_content.scorer import score_tweet, comparison_report
 from x_content import config
 
@@ -199,6 +199,144 @@ def optimize(
         "original_report": original_report,
         "variations": data["variations"],
         "comparisons": comparisons,
+        "claude_analysis": data.get("analysis", ""),
+        "lang": lang,
+    }
+
+
+def optimize_preserve_style(
+    tweet: str,
+    topic: str | None = None,
+    lang: str = "auto",
+    has_media: bool = False,
+    thread: bool = False,
+) -> dict:
+    """Run Phase 1: optimize while preserving original style/voice.
+
+    Returns dict with: tweet, analysis, original_report,
+    optimized (single variation), comparison, claude_analysis, lang.
+    """
+    # Step 1: Analyze original
+    analysis = analyze(tweet, has_media=has_media)
+
+    # Resolve language
+    if lang == "auto":
+        lang = analysis["lang"]
+
+    # Step 2: Score original
+    original_scores = score_tweet(analysis)
+
+    # Step 3: Build preserve-style prompt
+    prompt = build_preserve_style_prompt(
+        tweet=tweet,
+        analysis=analysis,
+        scores=original_scores,
+        topic=topic,
+        lang=lang,
+        has_media=has_media,
+        thread=thread,
+    )
+
+    # Step 4: Call Claude
+    raw_response = call_claude(prompt)
+
+    # Step 5: Parse and validate
+    data = parse_response(raw_response)
+
+    if "variations" not in data or not data["variations"]:
+        raise OptimizationError("Response missing 'variations' key.")
+
+    max_chars = config.get("optimization", {}).get("max_chars", 280)
+    var = data["variations"][0]
+
+    warnings = validate_variation(var, max_chars)
+    if warnings:
+        print(f"  Warning: {'; '.join(warnings)}", file=sys.stderr)
+    if "scores" in var:
+        for action in ACTIONS:
+            var["scores"].setdefault(action, 0.0)
+
+    # Step 6: Generate comparison
+    comp = None
+    if "scores" in var:
+        comp = comparison_report(analysis, var["scores"])
+
+    from x_content.scorer import full_score_report
+    original_report = full_score_report(analysis)
+
+    return {
+        "tweet": tweet,
+        "analysis": analysis,
+        "original_report": original_report,
+        "optimized": var,
+        "comparison": comp,
+        "claude_analysis": data.get("analysis", ""),
+        "lang": lang,
+    }
+
+
+def refine_tweet(
+    original_tweet: str,
+    current_tweet: str,
+    user_feedback: str,
+    lang: str = "auto",
+    has_media: bool = False,
+    thread: bool = False,
+) -> dict:
+    """Refine an optimized tweet based on user feedback.
+
+    Takes the original tweet, current optimized version, and user's
+    instructions for changes. Returns a new optimized version.
+    """
+    # Detect language from original if auto
+    if lang == "auto":
+        from x_content.analyzer import analyze as _analyze
+        lang = _analyze(original_tweet, has_media=has_media)["lang"]
+
+    # Build refine prompt
+    prompt = build_refine_prompt(
+        original_tweet=original_tweet,
+        current_tweet=current_tweet,
+        user_feedback=user_feedback,
+        lang=lang,
+        has_media=has_media,
+        thread=thread,
+    )
+
+    # Call Claude
+    raw_response = call_claude(prompt)
+
+    # Parse and validate
+    data = parse_response(raw_response)
+
+    if "variations" not in data or not data["variations"]:
+        raise OptimizationError("Response missing 'variations' key.")
+
+    max_chars = config.get("optimization", {}).get("max_chars", 280)
+    var = data["variations"][0]
+
+    warnings = validate_variation(var, max_chars)
+    if warnings:
+        print(f"  Warning: {'; '.join(warnings)}", file=sys.stderr)
+    if "scores" in var:
+        for action in ACTIONS:
+            var["scores"].setdefault(action, 0.0)
+
+    # Generate comparison against original
+    original_analysis = analyze(original_tweet, has_media=has_media)
+    comp = None
+    if "scores" in var:
+        comp = comparison_report(original_analysis, var["scores"])
+
+    from x_content.scorer import full_score_report
+    original_report = full_score_report(original_analysis)
+
+    return {
+        "tweet": original_tweet,
+        "analysis": original_analysis,
+        "original_report": original_report,
+        "optimized": var,
+        "comparison": comp,
         "claude_analysis": data.get("analysis", ""),
         "lang": lang,
     }

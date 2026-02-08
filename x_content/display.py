@@ -1,116 +1,202 @@
 """Terminal output formatting.
 
 Renders signal comparisons, category bars, and summary tables.
+Uses ANSI colors, dynamic terminal width, and clean formatting
+that makes tweet text easily copyable.
 """
+
+import shutil
+import textwrap
 
 from x_content.algorithm import ACTIONS, ACTION_LABELS, NEGATIVE_ACTIONS
 from x_content import config
 
 
-# Box drawing characters
+# ── ANSI Color Codes ──────────────────────────────────────────────
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+ITALIC = "\033[3m"
+UNDERLINE = "\033[4m"
+
+# Colors
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+MAGENTA = "\033[35m"
+BLUE = "\033[34m"
+WHITE = "\033[97m"
+GRAY = "\033[90m"
+
+# Bright variants
+BRIGHT_CYAN = "\033[96m"
+BRIGHT_GREEN = "\033[92m"
+BRIGHT_YELLOW = "\033[93m"
+BRIGHT_RED = "\033[91m"
+BRIGHT_MAGENTA = "\033[95m"
+
+# Background
+BG_DARK = "\033[48;5;234m"
+BG_DARKER = "\033[48;5;232m"
+
+# ── Box Drawing Characters ────────────────────────────────────────
 H_LINE = "\u2500"       # ─
-D_LINE = "\u2550"       # ═
-V_LINE = "\u2502"       # │
-TL = "\u256d"           # ╭ (rounded) or \u2554 ╔
-TR = "\u256e"           # ╮ or \u2557 ╗
-BL = "\u2570"           # ╰ or \u255a ╚
-BR = "\u256f"           # ╯ or \u255d ╝
-BOX_TL = "\u2554"       # ╔
-BOX_TR = "\u2557"       # ╗
-BOX_BL = "\u255a"       # ╚
-BOX_BR = "\u255d"       # ╝
-BOX_H = "\u2550"        # ═
-BOX_V = "\u2551"        # ║
-BOX_T = "\u2566"        # ╦
-BOX_B = "\u2569"        # ╩
-BOX_L = "\u2560"        # ╠
-BOX_R = "\u2563"        # ╣
-
 BLOCK_FULL = "\u2588"   # █
-BLOCK_EMPTY = "\u2591"  # ░
+BLOCK_MED = "\u2593"    # ▓
+BLOCK_LIGHT = "\u2591"  # ░
+ARROW_RIGHT = "\u2192"  # →
+ARROW_UP = "\u25b2"     # ▲
+ARROW_DOWN = "\u25bc"   # ▼
+BULLET = "\u2022"       # •
+CHECK = "\u2713"        # ✓
+CROSS = "\u2717"        # ✗
 
-WIDTH = 68
+
+def _get_width() -> int:
+    """Get terminal width, with a sensible fallback."""
+    try:
+        cols = shutil.get_terminal_size().columns
+        return min(max(cols, 60), 120)
+    except Exception:
+        return 80
 
 
-def _bar(value: float, width: int = 24) -> str:
-    """Render a progress bar."""
+def _bar(value: float, width: int = 20) -> str:
+    """Render a colored progress bar."""
     cfg_width = config.get("display", {}).get("bar_width", width)
     filled = int(value * cfg_width)
-    return BLOCK_FULL * filled + BLOCK_EMPTY * (cfg_width - filled)
+    empty = cfg_width - filled
+
+    if value >= 0.7:
+        color = GREEN
+    elif value >= 0.4:
+        color = YELLOW
+    else:
+        color = DIM
+
+    return f"{color}{BLOCK_FULL * filled}{GRAY}{BLOCK_LIGHT * empty}{RESET}"
+
+
+def _bar_negative(value: float, width: int = 20) -> str:
+    """Render a progress bar for negative signals (lower is better)."""
+    cfg_width = config.get("display", {}).get("bar_width", width)
+    filled = int(value * cfg_width)
+    empty = cfg_width - filled
+
+    if value <= 0.05:
+        color = GREEN
+    elif value <= 0.15:
+        color = YELLOW
+    else:
+        color = RED
+
+    return f"{color}{BLOCK_FULL * filled}{GRAY}{BLOCK_LIGHT * empty}{RESET}"
 
 
 def _change_arrows(delta_pct: float, is_negative: bool = False) -> str:
-    """Render change arrows based on percentage change."""
+    """Render colored change arrows."""
     if is_negative:
-        # For negative signals, decrease is good
         if delta_pct <= -50:
-            return "\u25bc\u25bc (improved)"    # ▼▼
+            return f"{GREEN}{ARROW_DOWN}{ARROW_DOWN} improved{RESET}"
         elif delta_pct < 0:
-            return "\u25bc (improved)"           # ▼
+            return f"{GREEN}{ARROW_DOWN} improved{RESET}"
         elif delta_pct > 50:
-            return "\u25b2\u25b2 (worse)"        # ▲▲
+            return f"{RED}{ARROW_UP}{ARROW_UP} worse{RESET}"
         elif delta_pct > 0:
-            return "\u25b2 (worse)"              # ▲
+            return f"{RED}{ARROW_UP} worse{RESET}"
         return ""
     else:
         abs_d = abs(delta_pct)
         if abs_d >= 300:
-            arrows = "\u25b2\u25b2\u25b2\u25b2" if delta_pct > 0 else "\u25bc\u25bc\u25bc\u25bc"
+            arrows = ARROW_UP * 4 if delta_pct > 0 else ARROW_DOWN * 4
         elif abs_d >= 100:
-            arrows = "\u25b2\u25b2\u25b2" if delta_pct > 0 else "\u25bc\u25bc\u25bc"
+            arrows = ARROW_UP * 3 if delta_pct > 0 else ARROW_DOWN * 3
         elif abs_d >= 50:
-            arrows = "\u25b2\u25b2" if delta_pct > 0 else "\u25bc\u25bc"
+            arrows = ARROW_UP * 2 if delta_pct > 0 else ARROW_DOWN * 2
         elif abs_d > 0:
-            arrows = "\u25b2" if delta_pct > 0 else "\u25bc"
+            arrows = ARROW_UP if delta_pct > 0 else ARROW_DOWN
         else:
             return ""
-        return arrows
+        color = GREEN if delta_pct > 0 else RED
+        return f"{color}{arrows}{RESET}"
 
 
-def _box_line(text: str, width: int = WIDTH) -> str:
-    """Render a line inside a box."""
-    return f"{BOX_V}  {text:<{width - 4}}  {BOX_V}"
+def _header_line(text: str, width: int) -> str:
+    """Create a styled header line."""
+    pad = width - len(text) - 4
+    return f"{BOLD}{CYAN}{'─' * 2} {text} {'─' * max(pad, 0)}{RESET}"
 
 
-def _box_top(width: int = WIDTH) -> str:
-    return BOX_TL + BOX_H * (width - 2) + BOX_TR
+def _section_title(text: str) -> str:
+    """Create a section title."""
+    return f"\n  {BOLD}{WHITE}{text}{RESET}"
 
 
-def _box_bottom(width: int = WIDTH) -> str:
-    return BOX_BL + BOX_H * (width - 2) + BOX_BR
+def _divider(width: int) -> str:
+    """Create a subtle divider."""
+    return f"  {GRAY}{'─' * (width - 4)}{RESET}"
 
 
-def _box_separator(width: int = WIDTH) -> str:
-    return BOX_L + BOX_H * (width - 2) + BOX_R
+def _wrap_text(text: str, width: int, indent: int = 4) -> list[str]:
+    """Wrap text to fit terminal width."""
+    lines = []
+    for line in text.split("\n"):
+        if len(line) + indent <= width:
+            lines.append(line)
+        else:
+            wrapped = textwrap.wrap(line, width=width - indent - 2)
+            lines.extend(wrapped)
+    return lines
 
 
-def render_header() -> str:
-    """Render the header box."""
-    lines = [
-        _box_top(),
-        _box_line("X ALGORITHM TWEET OPTIMIZER"),
-        _box_separator(),
-    ]
-    return "\n".join(lines)
+# ═══════════════════════════════════════════════════════════════════
+#  PHASE 1: Preserve-style result display
+# ═══════════════════════════════════════════════════════════════════
 
+def render_preserve_style(result: dict) -> str:
+    """Render Phase 1 result: original vs same-style optimized tweet."""
+    w = _get_width()
+    parts = []
 
-def render_original(tweet: str, analysis: dict, report: dict) -> str:
-    """Render original tweet section with signal profile."""
-    overall = report["overall"]
-    lang = analysis["lang"].upper()
+    # Header
+    parts.append("")
+    parts.append(f"  {BOLD}{BRIGHT_CYAN}╔{'═' * (w - 6)}╗{RESET}")
+    parts.append(f"  {BOLD}{BRIGHT_CYAN}║  {WHITE}X ALGORITHM TWEET OPTIMIZER{' ' * (w - 33)}║{RESET}")
+    parts.append(f"  {BOLD}{BRIGHT_CYAN}╚{'═' * (w - 6)}╝{RESET}")
+    parts.append("")
+
+    tweet = result["tweet"]
+    analysis = result["analysis"]
+    report = result["original_report"]
+    optimized = result["optimized"]
+    comparison = result["comparison"]
+
+    orig_overall = report["overall"]
+    opt_overall = comparison["optimized"]["overall"] if comparison else 0
+    change = comparison["overall_change"] if comparison else 0
+    change_str = f"+{change:.0f}" if change >= 0 else f"{change:.0f}"
+
+    # ── Original Tweet ──
+    parts.append(_header_line("ORIGINAL TWEET", w))
+    parts.append("")
+
+    # Show tweet text cleanly (no box decorations)
+    parts.append(f"  {DIM}{ITALIC}")
+    for line in _wrap_text(tweet, w):
+        parts.append(f"    {line}")
+    parts.append(f"  {RESET}")
+    parts.append("")
+
     chars = analysis["char_count"]
+    lang_str = analysis["lang"].upper()
+    char_color = RED if chars > 280 else GREEN
+    parts.append(f"  {GRAY}Characters: {char_color}{chars}/280{RESET}  {GRAY}│  Lang: {CYAN}{lang_str}{RESET}  {GRAY}│  Score: {YELLOW}{orig_overall:.0f}%{RESET}")
 
-    lines = [
-        _box_line("Original Tweet"),
-        _box_line(f'"{_truncate(tweet, WIDTH - 8)}"'),
-        _box_line(f"Characters: {chars}/280 | Lang: {lang} | Algorithm Score: {overall:.0f}%"),
-        _box_separator(),
-    ]
-
-    # Signal profile (top signals only)
-    lines.append("")
-    lines.append(f" Original Signal Profile:")
-    lines.append(f" {H_LINE * 50}")
+    # ── Signal Profile (compact) ──
+    parts.append("")
+    parts.append(_section_title("Signal Profile"))
+    parts.append(_divider(w))
 
     display_cfg = config.get("display", {})
     show_all = display_cfg.get("show_all_signals", False)
@@ -120,11 +206,10 @@ def render_original(tweet: str, analysis: dict, report: dict) -> str:
     if show_all:
         display_actions = ACTIONS
     else:
-        # Show top N by weighted importance + all negatives
         scored = []
         for a in ACTIONS:
             if a in NEGATIVE_ACTIONS:
-                scored.append((a, 999))  # always show
+                scored.append((a, 999))
             else:
                 scored.append((a, signals.get(a, 0.0)))
         scored.sort(key=lambda x: -x[1])
@@ -132,23 +217,122 @@ def render_original(tweet: str, analysis: dict, report: dict) -> str:
 
     for action in display_actions:
         val = signals.get(action, 0.0)
-        label = ACTION_LABELS[action]
-        bar = _bar(val, 20)
-        risk = "  (risk)" if action in NEGATIVE_ACTIONS else ""
-        padded_name = f"{action:<28}"
-        lines.append(f" {padded_name} {bar} {val:>4.0%}{risk}")
+        is_neg = action in NEGATIVE_ACTIONS
+        bar = _bar_negative(val) if is_neg else _bar(val)
+        risk_label = f"  {RED}risk{RESET}" if is_neg else ""
+        name = ACTION_LABELS.get(action, action)
+        parts.append(f"    {GRAY}{name:<22}{RESET} {bar} {val:>4.0%}{risk_label}")
 
-    lines.append("")
-    return "\n".join(lines)
+    # ── Optimized Tweet ──
+    parts.append("")
+    parts.append("")
+    score_color = GREEN if change > 0 else RED if change < 0 else YELLOW
+    parts.append(_header_line(f"OPTIMIZED TWEET  {score_color}{orig_overall:.0f}% {ARROW_RIGHT} {opt_overall:.0f}% ({change_str}pts){RESET}", w + 20))
+    parts.append("")
+
+    opt_tweet = optimized.get("tweet", "")
+    opt_chars = optimized.get("char_count", len(opt_tweet))
+
+    # Show the optimized tweet in a clean, copyable format
+    parts.append(f"  {BOLD}{WHITE}")
+    for line in _wrap_text(opt_tweet, w):
+        parts.append(f"    {line}")
+    parts.append(f"  {RESET}")
+    parts.append("")
+
+    char_color = RED if opt_chars > 280 else GREEN
+    parts.append(f"  {GRAY}Characters: {char_color}{opt_chars}/280{RESET}")
+
+    # ── What Changed ──
+    explanation = optimized.get("explanation", "")
+    if explanation:
+        parts.append("")
+        parts.append(f"  {GRAY}{ITALIC}What changed: {explanation}{RESET}")
+
+    # ── Signal Changes (top improvements) ──
+    if comparison:
+        parts.append("")
+        parts.append(_section_title("Signal Changes"))
+        parts.append(_divider(w))
+
+        delta = comparison["delta"]
+        sorted_actions = sorted(
+            ACTIONS,
+            key=lambda a: abs(delta[a]["delta_pct"]),
+            reverse=True,
+        )
+        display_delta_actions = sorted_actions[:top_n]
+
+        for action in display_delta_actions:
+            d = delta[action]
+            is_neg = action in NEGATIVE_ACTIONS
+            orig_pct = d["original"]
+            opt_pct = d["optimized"]
+            dpct = d["delta_pct"]
+            arrows = _change_arrows(dpct, is_neg)
+            sign = "+" if dpct >= 0 else ""
+            name = ACTION_LABELS.get(action, action)
+            parts.append(
+                f"    {GRAY}{name:<22}{RESET} {orig_pct:>3.0%} {ARROW_RIGHT} {opt_pct:>3.0%}  {sign}{dpct:.1f}%  {arrows}"
+            )
+
+        # ── Category Scores ──
+        parts.append("")
+        parts.append(_section_title("Category Scores"))
+        parts.append(_divider(w))
+
+        cat_delta = comparison["category_delta"]
+        cat_order = ["engagement", "discoverability", "shareability",
+                     "content_quality", "safety"]
+        for cat in cat_order:
+            if cat in cat_delta:
+                cd = cat_delta[cat]
+                opt_val = cd["optimized"]
+                ch = cd["change"]
+                bar = _bar(opt_val / 100.0, 20)
+                sign = "+" if ch >= 0 else ""
+                cat_label = cat.replace("_", " ").title()
+                ch_color = GREEN if ch > 0 else RED if ch < 0 else GRAY
+                parts.append(
+                    f"    {GRAY}{cat_label:<20}{RESET} {bar} {opt_val:>3.0f}%  {ch_color}({sign}{ch:.0f}pts){RESET}"
+                )
+
+    # Media suggestion
+    media_sug = optimized.get("media_suggestion", "")
+    if media_sug:
+        parts.append("")
+        parts.append(f"  {MAGENTA}{BULLET} Media tip:{RESET} {DIM}{media_sug}{RESET}")
+
+    # Analysis
+    claude_analysis = result.get("claude_analysis", "")
+    if claude_analysis:
+        parts.append("")
+        parts.append(_section_title("Analysis"))
+        parts.append(_divider(w))
+        for line in _wrap_text(claude_analysis, w - 4):
+            parts.append(f"    {DIM}{line}{RESET}")
+
+    parts.append("")
+    parts.append(f"  {GRAY}{'─' * (w - 4)}{RESET}")
+    parts.append("")
+
+    return "\n".join(parts)
 
 
-def render_variation(
+# ═══════════════════════════════════════════════════════════════════
+#  PHASE 2: Different style variations display
+# ═══════════════════════════════════════════════════════════════════
+
+def render_variation_card(
     index: int,
     variation: dict,
     comparison: dict | None,
     verbose: bool = False,
 ) -> str:
-    """Render a single optimized variation with comparison data."""
+    """Render a single variation as a clean card."""
+    w = _get_width()
+    parts = []
+
     tweet = variation.get("tweet", "")
     strategy = variation.get("strategy", "")
     char_count = variation.get("char_count", len(tweet))
@@ -161,46 +345,39 @@ def render_variation(
         opt_overall = comparison["optimized"]["overall"]
         overall_change = comparison["overall_change"]
 
-    change_str = f"+{overall_change:.0f}pts" if overall_change >= 0 else f"{overall_change:.0f}pts"
+    change_str = f"+{overall_change:.0f}" if overall_change >= 0 else f"{overall_change:.0f}"
+    change_color = GREEN if overall_change > 0 else RED if overall_change < 0 else GRAY
 
-    lines = [
-        _box_separator(),
-        _box_line(f'Variation {index}: "{strategy}"'),
-        _box_line(f"Algorithm Compatibility: {opt_overall:.0f}% ({change_str})"),
-        _box_separator(),
-        _box_line(""),
-    ]
+    # Card header
+    parts.append("")
+    parts.append(f"  {BOLD}{BRIGHT_MAGENTA}[{index}]{RESET} {BOLD}{WHITE}{strategy}{RESET}  {change_color}{opt_overall:.0f}% ({change_str}pts){RESET}")
+    parts.append(_divider(w))
+    parts.append("")
 
-    # Wrap tweet text
-    for tweet_line in tweet.split("\n"):
-        lines.append(_box_line(tweet_line))
+    # Tweet text — clean and copyable
+    parts.append(f"  {BOLD}{WHITE}")
+    for line in _wrap_text(tweet, w):
+        parts.append(f"    {line}")
+    parts.append(f"  {RESET}")
+    parts.append("")
 
-    lines.append(_box_line(""))
-    lines.append(_box_line(f"Characters: {char_count}/280"))
-    lines.append(_box_line(""))
+    char_color = RED if char_count > 280 else GREEN
+    parts.append(f"  {GRAY}Characters: {char_color}{char_count}/280{RESET}")
 
-    # Signal changes
+    if explanation:
+        parts.append(f"  {GRAY}{ITALIC}{explanation}{RESET}")
+
+    # Signal changes (compact - top 5)
     if comparison:
-        lines.append(_box_line("Signal Changes:"))
-        lines.append(_box_line(H_LINE * 52))
-
+        parts.append("")
         delta = comparison["delta"]
-        display_cfg = config.get("display", {})
-        show_all = display_cfg.get("show_all_signals", False)
-        top_n = display_cfg.get("top_signals_count", 8)
+        sorted_actions = sorted(
+            ACTIONS,
+            key=lambda a: abs(delta[a]["delta_pct"]),
+            reverse=True,
+        )
 
-        if show_all or verbose:
-            display_actions = ACTIONS
-        else:
-            # Sort by absolute delta, show top N
-            sorted_actions = sorted(
-                ACTIONS,
-                key=lambda a: abs(delta[a]["delta_pct"]),
-                reverse=True,
-            )
-            display_actions = sorted_actions[:top_n]
-
-        for action in display_actions:
+        for action in sorted_actions[:5]:
             d = delta[action]
             is_neg = action in NEGATIVE_ACTIONS
             orig_pct = d["original"]
@@ -208,103 +385,88 @@ def render_variation(
             dpct = d["delta_pct"]
             arrows = _change_arrows(dpct, is_neg)
             sign = "+" if dpct >= 0 else ""
-            name = f"{action:<28}"
-            lines.append(
-                _box_line(f"{name} {orig_pct:>3.0%} \u2192 {opt_pct:>3.0%}   {sign}{dpct:.1f}%   {arrows}")
+            name = ACTION_LABELS.get(action, action)
+            parts.append(
+                f"    {GRAY}{name:<22}{RESET} {orig_pct:>3.0%} {ARROW_RIGHT} {opt_pct:>3.0%}  {sign}{dpct:.1f}%  {arrows}"
             )
 
-        lines.append(_box_line(""))
-
-        # Category compatibility
-        lines.append(_box_line("Category Compatibility:"))
+        # Category scores (compact single line)
         cat_delta = comparison["category_delta"]
-        cat_order = ["engagement", "discoverability", "shareability",
-                     "content_quality", "safety"]
-        for cat in cat_order:
+        cat_parts = []
+        for cat in ["engagement", "discoverability", "shareability", "content_quality", "safety"]:
             if cat in cat_delta:
                 cd = cat_delta[cat]
-                opt_val = cd["optimized"]
-                change = cd["change"]
-                bar = _bar(opt_val / 100.0, 24)
-                sign = "+" if change >= 0 else ""
-                cat_label = cat.replace("_", " ").title()
-                lines.append(
-                    _box_line(f"{cat_label:<20} {bar} {opt_val:>3.0f}%  ({sign}{change:.0f}pts)")
-                )
-
-    lines.append(_box_line(""))
+                ch = cd["change"]
+                sign = "+" if ch >= 0 else ""
+                color = GREEN if ch > 0 else RED if ch < 0 else GRAY
+                short_name = cat.replace("_", " ").title()[:12]
+                cat_parts.append(f"{color}{short_name}: {sign}{ch:.0f}{RESET}")
+        parts.append("")
+        parts.append(f"    {GRAY}Categories:{RESET} {'  '.join(cat_parts)}")
 
     if media_sug:
-        lines.append(_box_line(f"Media Suggestion: {_truncate(media_sug, WIDTH - 22)}"))
+        parts.append(f"    {MAGENTA}{BULLET} Media:{RESET} {DIM}{media_sug[:60]}{'...' if len(media_sug) > 60 else ''}{RESET}")
 
-    if explanation and verbose:
-        lines.append(_box_line(f"Strategy: {_truncate(explanation, WIDTH - 14)}"))
-
-    return "\n".join(lines)
+    parts.append("")
+    return "\n".join(parts)
 
 
-def render_summary(
-    original_overall: float,
-    variations: list[dict],
-    comparisons: list[dict | None],
-) -> str:
-    """Render summary comparison table."""
-    lines = [
-        _box_separator(),
-        "",
-        f" Summary Comparison:",
-        f" {H_LINE * 56}",
-        f" {'Variation':<12} {'Strategy':<24} {'Score':>6}   {'Change':>8}",
-        f" {H_LINE * 56}",
-        f" {'Original':<12} {'-':<24} {original_overall:>5.0f}%   {'-':>8}",
-    ]
+def render_variations(result: dict, verbose: bool = False) -> str:
+    """Render Phase 2: all style variations."""
+    w = _get_width()
+    parts = []
 
-    for i, (var, comp) in enumerate(zip(variations, comparisons), 1):
-        strategy = var.get("strategy", "")[:22]
-        if comp:
-            opt_score = comp["optimized"]["overall"]
-            change = comp["overall_change"]
-            sign = "+" if change >= 0 else ""
-            lines.append(
-                f" #{i:<11} {strategy:<24} {opt_score:>5.0f}%   {sign}{change:.0f}pts"
-            )
-        else:
-            lines.append(f" #{i:<11} {strategy:<24}   {'N/A':>5}   {'N/A':>8}")
-
-    lines.append(f" {H_LINE * 56}")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def render_full(result: dict, verbose: bool = False) -> str:
-    """Render the complete optimization result."""
-    parts = [
-        render_header(),
-        render_original(
-            result["tweet"],
-            result["analysis"],
-            result["original_report"],
-        ),
-    ]
+    parts.append("")
+    parts.append(f"  {BOLD}{BRIGHT_CYAN}╔{'═' * (w - 6)}╗{RESET}")
+    parts.append(f"  {BOLD}{BRIGHT_CYAN}║  {WHITE}STYLE VARIATIONS{' ' * (w - 22)}║{RESET}")
+    parts.append(f"  {BOLD}{BRIGHT_CYAN}╚{'═' * (w - 6)}╝{RESET}")
 
     for i, (var, comp) in enumerate(
         zip(result["variations"], result["comparisons"]), 1
     ):
-        parts.append(render_variation(i, var, comp, verbose=verbose))
+        parts.append(render_variation_card(i, var, comp, verbose=verbose))
 
-    parts.append(render_summary(
-        result["original_report"]["overall"],
-        result["variations"],
-        result["comparisons"],
-    ))
+    # Summary comparison table
+    parts.append(_header_line("SUMMARY", w))
+    parts.append("")
 
+    original_overall = result["original_report"]["overall"]
+    parts.append(f"    {GRAY}{'Tweet':<8} {'Strategy':<28} {'Score':>6}  {'Change':>8}{RESET}")
+    parts.append(f"    {GRAY}{'─' * 54}{RESET}")
+    parts.append(f"    {DIM}{'Original':<8} {'-':<28} {original_overall:>5.0f}%  {'-':>8}{RESET}")
+
+    for i, (var, comp) in enumerate(zip(result["variations"], result["comparisons"]), 1):
+        strategy = var.get("strategy", "")[:26]
+        if comp:
+            opt_score = comp["optimized"]["overall"]
+            ch = comp["overall_change"]
+            sign = "+" if ch >= 0 else ""
+            ch_color = GREEN if ch > 0 else RED if ch < 0 else GRAY
+            parts.append(
+                f"    {BRIGHT_MAGENTA}#{i:<7}{RESET} {WHITE}{strategy:<28}{RESET} {opt_score:>5.0f}%  {ch_color}{sign}{ch:.0f}pts{RESET}"
+            )
+        else:
+            parts.append(f"    {BRIGHT_MAGENTA}#{i:<7}{RESET} {strategy:<28}   {'N/A':>5}  {'N/A':>8}")
+
+    # Analysis
     if result.get("claude_analysis"):
-        parts.append(f" Analysis: {result['claude_analysis']}")
         parts.append("")
+        parts.append(f"  {GRAY}{ITALIC}Analysis: {result['claude_analysis']}{RESET}")
 
-    parts.append(_box_bottom())
+    parts.append("")
+    parts.append(f"  {GRAY}{'─' * (w - 4)}{RESET}")
+    parts.append("")
 
     return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Legacy: Full render (backwards compatible for --json mode)
+# ═══════════════════════════════════════════════════════════════════
+
+def render_full(result: dict, verbose: bool = False) -> str:
+    """Render the complete optimization result (legacy full output)."""
+    return render_variations(result, verbose=verbose)
 
 
 def render_json(result: dict) -> str:
@@ -343,11 +505,3 @@ def render_json(result: dict) -> str:
         output["variations"].append(v)
 
     return json.dumps(output, indent=2, ensure_ascii=False)
-
-
-def _truncate(text: str, max_len: int) -> str:
-    """Truncate text with ellipsis if needed."""
-    text = text.replace("\n", " ")
-    if len(text) <= max_len:
-        return text
-    return text[:max_len - 3] + "..."
