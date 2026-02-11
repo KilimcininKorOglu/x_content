@@ -7,6 +7,7 @@ Parses JSON response and validates output.
 import json
 import subprocess
 import sys
+from typing import Optional
 
 from x_content.algorithm import ACTIONS
 from x_content.analyzer import analyze
@@ -19,11 +20,22 @@ class OptimizationError(Exception):
     pass
 
 
-def call_claude(prompt: str, timeout: int | None = None) -> str:
+def _validatePrompt(prompt: str) -> str:
+    """Validate and sanitize prompt input."""
+    if not prompt or not isinstance(prompt, str):
+        raise OptimizationError("Prompt cannot be empty")
+    if len(prompt) > 100000:
+        raise OptimizationError("Prompt exceeds maximum length")
+    return prompt
+
+
+def call_claude(prompt: str, timeout: Optional[int] = None) -> str:
     """Call Claude Code CLI and return the response text.
 
     Uses: claude -p "<prompt>" --output-format json
     """
+    prompt = _validatePrompt(prompt)
+
     if timeout is None:
         timeout = config.get("claude", {}).get("timeout", 120)
 
@@ -33,6 +45,7 @@ def call_claude(prompt: str, timeout: int | None = None) -> str:
             capture_output=True,
             text=True,
             timeout=timeout,
+            shell=False,
         )
     except FileNotFoundError:
         raise OptimizationError(
