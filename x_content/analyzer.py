@@ -36,15 +36,15 @@ _POWER_WORDS_TR = [
 
 
 def detect_language(text: str) -> str:
-    """Simple language detection: 'tr', 'en', or 'auto'."""
+    """Simple language detection: 'tr' or 'en'."""
     if any(c in _TR_CHARS for c in text):
         return "tr"
-    # Check for common Turkish words
     lower = text.lower()
-    tr_words = ["bir", "bu", "ve", "ile", "için", "olan", "var",
-                "gibi", "ama", "çok", "daha", "ben", "sen", "biz"]
-    tr_count = sum(1 for w in tr_words if f" {w} " in f" {lower} ")
-    if tr_count >= 2:
+    trWords = ["bir", "bu", "ve", "ile", "için", "olan", "var",
+               "gibi", "ama", "çok", "daha", "ben", "sen", "biz",
+               "değil", "olarak", "kadar", "sonra", "önce", "şey"]
+    trCount = sum(1 for w in trWords if re.search(rf"\b{w}\b", lower))
+    if trCount >= 3:
         return "tr"
     return "en"
 
