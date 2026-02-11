@@ -330,7 +330,11 @@ def main():
             sys.exit(1)
 
     if not tweet:
-        parser.print_help()
+        print("Error: Tweet text cannot be empty.", file=sys.stderr)
+        sys.exit(1)
+
+    if not tweet.strip():
+        print("Error: Tweet text cannot be empty or whitespace only.", file=sys.stderr)
         sys.exit(1)
 
     args.tweet = tweet
