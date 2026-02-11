@@ -109,32 +109,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def copy_to_clipboard(text: str) -> bool:
-    """Copy text to system clipboard. Returns True on success."""
+def copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Copy text to system clipboard. Returns (success, error_message)."""
     system = platform.system()
     try:
         if system == "Darwin":
             proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
             proc.communicate(text.encode("utf-8"))
-            return proc.returncode == 0
+            if proc.returncode == 0:
+                return True, ""
+            return False, "pbcopy failed"
         elif system == "Linux":
-            # Try xclip first, then xsel
-            for cmd in [["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]:
+            tools = [
+                (["xclip", "-selection", "clipboard"], "xclip"),
+                (["xsel", "--clipboard", "--input"], "xsel"),
+            ]
+            missingTools = []
+            for cmd, name in tools:
                 try:
                     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
                     proc.communicate(text.encode("utf-8"))
                     if proc.returncode == 0:
-                        return True
+                        return True, ""
                 except FileNotFoundError:
+                    missingTools.append(name)
                     continue
-            return False
+            if len(missingTools) == len(tools):
+                return False, f"Install xclip or xsel: sudo apt install xclip"
+            return False, "Clipboard command failed"
         elif system == "Windows":
             proc = subprocess.Popen(["clip"], stdin=subprocess.PIPE)
             proc.communicate(text.encode("utf-16le"))
-            return proc.returncode == 0
-    except Exception:
-        return False
-    return False
+            if proc.returncode == 0:
+                return True, ""
+            return False, "clip command failed"
+    except Exception as e:
+        return False, str(e)
+    return False, f"Unsupported platform: {system}"
 
 
 def prompt_choice(question: str, options: list[str]) -> str:
@@ -206,10 +217,11 @@ def _interactive_menu(args, original_tweet: str, current_tweet: str, lang: str):
 
         if choice == "1":
             # Copy optimized tweet
-            if copy_to_clipboard(current_tweet):
+            success, errMsg = copy_to_clipboard(current_tweet)
+            if success:
                 print(f"\n  {GREEN}{BOLD}Copied to clipboard!{RESET}\n")
             else:
-                print(f"\n  {YELLOW}Could not access clipboard. Here's the tweet to copy:{RESET}\n")
+                print(f"\n  {YELLOW}Could not access clipboard ({errMsg}). Here's the tweet to copy:{RESET}\n")
                 print(f"  {current_tweet}\n")
 
         elif choice == "2":
@@ -223,10 +235,11 @@ def _interactive_menu(args, original_tweet: str, current_tweet: str, lang: str):
 
         elif choice == "4":
             # Copy original
-            if copy_to_clipboard(original_tweet):
+            success, errMsg = copy_to_clipboard(original_tweet)
+            if success:
                 print(f"\n  {GREEN}{BOLD}Copied original to clipboard!{RESET}\n")
             else:
-                print(f"\n  {YELLOW}Could not access clipboard.{RESET}\n")
+                print(f"\n  {YELLOW}Could not access clipboard ({errMsg}).{RESET}\n")
 
         else:
             print(f"\n  {DIM}Done.{RESET}\n")
@@ -304,10 +317,11 @@ def _run_phase2(args, tweet: str):
         idx = int(choice) - 1
         if 0 <= idx < num_vars:
             var_tweet = result["variations"][idx].get("tweet", "")
-            if copy_to_clipboard(var_tweet):
+            success, errMsg = copy_to_clipboard(var_tweet)
+            if success:
                 print(f"\n  {GREEN}{BOLD}Variation #{idx+1} copied to clipboard!{RESET}\n")
             else:
-                print(f"\n  {YELLOW}Could not access clipboard. Here's the tweet:{RESET}\n")
+                print(f"\n  {YELLOW}Could not access clipboard ({errMsg}). Here's the tweet:{RESET}\n")
                 print(f"  {var_tweet}\n")
         else:
             print(f"\n  {DIM}Done.{RESET}\n")
