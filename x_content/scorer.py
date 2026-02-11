@@ -207,15 +207,20 @@ def compute_delta(original: dict[str, float],
                   optimized: dict[str, float]) -> dict[str, dict]:
     """Compute per-signal percentage change between original and optimized scores.
 
-    Returns dict mapping action -> {original, optimized, delta_pct, direction}.
+    Returns dict mapping action -> {original, optimized, delta_pct, direction, is_new}.
     """
     result = {}
     for action in ACTIONS:
         orig = original.get(action, 0.0)
         opt = optimized.get(action, 0.0)
-        delta_pct = ((opt - orig) / max(orig, 0.01)) * 100
+        isNew = orig == 0.0 and opt > 0.0
+        if isNew:
+            delta_pct = 100.0
+        elif orig == 0.0:
+            delta_pct = 0.0
+        else:
+            delta_pct = ((opt - orig) / orig) * 100
         is_negative = action in NEGATIVE_ACTIONS
-        # For negative signals, decrease is an improvement
         if is_negative:
             direction = "improved" if delta_pct < 0 else "worse"
         else:
@@ -225,6 +230,7 @@ def compute_delta(original: dict[str, float],
             "optimized": opt,
             "delta_pct": round(delta_pct, 1),
             "direction": direction,
+            "is_new": isNew,
         }
     return result
 
