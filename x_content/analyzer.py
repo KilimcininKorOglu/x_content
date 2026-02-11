@@ -100,13 +100,16 @@ def analyze(text: str, has_media: bool = False) -> dict:
 
     # Emojis (rough count via Unicode range)
     emoji_count = len(re.findall(
-        r"[\U0001f300-\U0001f9ff\U00002600-\U000027bf\U0000fe00-\U0000feff]",
+        r"[\U0001f300-\U0001faff\U0001fb00-\U0001fbff\U00002600-\U000027bf\U0000fe00-\U0000feff]",
         text
     ))
 
+    from x_content import config
+    maxChars = config.get("optimization", {}).get("max_chars", 280)
+
     return {
         "char_count": char_count,
-        "char_utilization": round(char_count / 280 * 100, 1),
+        "char_utilization": round(char_count / maxChars * 100, 1),
         "word_count": word_count,
         "line_count": len(lines),
         "first_line": first_line,
